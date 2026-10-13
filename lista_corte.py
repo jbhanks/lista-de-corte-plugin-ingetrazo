@@ -72,7 +72,7 @@ def _as_local(group, matrix):
     scales = [_size(v) for v in vecs]
     if min(scales) <= 1e-9:
         raise ValueError("transformação com escala zero")
-    norms = [tuple(x/s for x in v) for x, s in zip(vecs, scales)]
+    norms = [tuple(x/s for x in v) for v, s in zip(vecs, scales)]
     shear = any(abs(_dot(norms[i], norms[j])) > 0.002
                 for i, j in ((0, 1), (0, 2), (1, 2)))
     return coords, tuple(scales), ("Transformação com cisalhamento" if shear else "")

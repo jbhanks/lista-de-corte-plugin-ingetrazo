@@ -4,9 +4,11 @@
 
 [Português](#português) · [Español](#español) · [English](#english)
 
-> Status: versão inicial 1.0.0. O código foi verificado sintaticamente e por testes de lógica; o funcionamento na interface do IngeTrazo 0.5.7 ainda precisa ser validado em uma instalação real.
+> **Status / Estado / Status — v1.0.0:** plugin testado pelo autor em uma instalação real do IngeTrazo e confirmado em funcionamento.
 >
-> Status: initial version 1.0.0. Syntax and logic have been checked; in-app operation on IngeTrazo 0.5.7 has not yet been validated.
+> Probado por el autor en una instalación real de IngeTrazo y confirmado en funcionamiento.
+>
+> Tested by the author in a real IngeTrazo installation and confirmed working.
 
 ---
 

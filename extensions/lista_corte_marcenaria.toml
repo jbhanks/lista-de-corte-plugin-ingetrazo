@@ -1,0 +1,22 @@
+# Community catalog entry for https://github.com/ingelibre/ingetrazo-extensions
+# Copy this exact file to extensions/lista_corte_marcenaria.toml in a fork.
+id = "lista_corte_marcenaria"
+version = "1.0.0"
+author = "Victor Jardim"
+author_url = "https://github.com/vemcjardim"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/vemcjardim/lista-de-corte-plugin-ingetrazo"
+download = "https://raw.githubusercontent.com/vemcjardim/lista-de-corte-plugin-ingetrazo/767b4dce3619fafc8a36757c5079cbe63c992f4e/lista_corte.py"
+sha256 = "a4ed67141b33419f9109d817bc6636caadef93ddf150e5d0336ab05796d4f4b5"
+ingetrazo = "0.5.7"
+tags = ["fabrication", "productivity"]
+
+[name]
+es = "Lista de corte para carpintería"
+en = "Woodworking Cut List"
+pt = "Lista de corte para marcenaria"
+
+[summary]
+es = "Extrae las dimensiones de grupos y componentes, agrupa las piezas idénticas y exporta un CSV con medidas en milímetros y cantos configurables."
+en = "Extracts panel dimensions from groups and components, groups identical parts and exports a CSV cut list with millimetre sizes and configurable edge banding."
+pt = "Extrai dimensões de grupos e componentes, agrupa peças iguais e exporta CSV com medidas em milímetros e fitas de borda configuráveis."

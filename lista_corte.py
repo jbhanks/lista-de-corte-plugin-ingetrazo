@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""IngeTrazo: lista de corte para marcenaria (plugin de arquivo único).
+"""IngeTrazo: cut list for woodworking (single-file plugin).
 
-Instale este arquivo na pasta aberta por Extensions > Open plugins folder.
-Compatível com a API de ferramentas descrita em docs/plugins.md (série 0.x).
-Não modifica o modelo. Medidas em milímetros; a cena usa metros.
+Install this file in the folder opened by Extensions > Open plugins folder.
+Compatible with the tools API described in docs/plugins.md (0.x series).
+Does not modify the model. Measurements are in millimetres; the scene uses metres.
 """
 from __future__ import annotations
 
@@ -13,6 +13,17 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from tools.base import Tool
+
+# When True, exported dimensions (CSV and "Copy table") are in inches instead
+# of millimetres, and "in" replaces "mm" in the exported headers. The on-screen
+# table and all internal calculations stay in mm.
+imperial = False
+
+MM_PER_INCH = 25.4
+
+
+def _unit():
+    return "in" if imperial else "mm"
 
 
 @dataclass
@@ -54,7 +65,7 @@ def _as_local(group, matrix):
     if axes is not None:
         inv, ok = axes.inverted()  # QMatrix4x4.inverted -> (matrix, bool)
         if not ok:
-            raise ValueError("eixos do grupo não invertíveis")
+            raise ValueError("group axes are not invertible")
         coords = [_xyz(inv.map(v.position)) for v in vertices]
         basis = matrix * axes if matrix is not None else axes
     else:
@@ -71,11 +82,11 @@ def _as_local(group, matrix):
         vecs.append(_xyz(basis.map(unit) - o))
     scales = [_size(v) for v in vecs]
     if min(scales) <= 1e-9:
-        raise ValueError("transformação com escala zero")
+        raise ValueError("transformation with zero scale")
     norms = [tuple(x/s for x in v) for v, s in zip(vecs, scales)]
     shear = any(abs(_dot(norms[i], norms[j])) > 0.002
                 for i, j in ((0, 1), (0, 2), (1, 2)))
-    return coords, tuple(scales), ("Transformação com cisalhamento" if shear else "")
+    return coords, tuple(scales), ("Transformation with shear" if shear else "")
 
 
 def _poly_area_2d(pts, i, j):
@@ -153,7 +164,7 @@ def collect_pieces(scene):
         own = getattr(g, "xform", None)
         transform = (base * own if base is not None and own is not None
                      else (own if own is not None else base))
-        full_name = (prefix + " / " if prefix else "") + (g.name or "Peça")
+        full_name = (prefix + " / " if prefix else "") + (g.name or "Piece")
         if g.mesh.vertices and g.mesh.faces:
             try:
                 coords, scales, warning = _as_local(g, transform)
@@ -165,11 +176,11 @@ def collect_pieces(scene):
                 if warning:
                     notices.append(warning)
                 if not _rectangular_solid(g, coords, mins, maxs):
-                    notices.append("REVISAR: sólido não retangular (caixa envolvente)")
+                    notices.append("REVIEW: non-rectangular solid (bounding box)")
                 if dims[2] < 0.2:
-                    notices.append("REVISAR: espessura inferior a 0,2 mm")
+                    notices.append("REVIEW: thickness under 0.2 mm")
                 if dims[2] > 80:
-                    notices.append("REVISAR: espessura superior a 80 mm")
+                    notices.append("REVIEW: thickness over 80 mm")
                 # Zero-size / degenerate solids are never useful cut pieces.
                 if min(dims) > 0:
                     out.append(Piece(full_name, 1,
@@ -178,7 +189,7 @@ def collect_pieces(scene):
                     skipped["empty"] += 1
             except (ValueError, ArithmeticError, AttributeError, TypeError) as exc:
                 out.append(Piece(full_name, 1, 0, 0, 0,
-                                 "REVISAR: impossível medir — " + str(exc)))
+                                 "REVIEW: unable to measure — " + str(exc)))
         elif g.mesh.vertices or g.mesh.edges:
             skipped["empty"] += 1
         for child in getattr(g, "children", ()) or ():
@@ -213,7 +224,14 @@ def group_pieces(pieces):
 
 
 def _number(value, decimals=1):
-    return f"{value:.{decimals}f}".replace(".", ",")
+    return f"{value:.{decimals}f}"
+
+
+def _dim(mm):
+    """Format a dimension given in mm for the CSV, honouring `imperial`."""
+    if imperial:
+        return _number(mm / MM_PER_INCH, 3)
+    return _number(mm)
 
 
 def _safe_csv(text):
@@ -225,23 +243,33 @@ def _safe_csv(text):
 
 
 def make_csv(path, rows):
-    """Write semicolon-separated, UTF-8 BOM CSV (Brazilian Excel friendly).
+    """Write semicolon-separated, UTF-8 BOM CSV with a period as decimal separator.
 
     rows: list of (description, qty, length, width, thickness,
-                  edge_long, edge_short, issue).
+                  edge_long, edge_short, issue), with dimensions in mm.
+    When `imperial` is True, dimensions are written in inches, total area in
+    square feet and total edge banding in feet; otherwise in mm, m² and m.
     """
+    unit = _unit()
+    area_unit, tape_unit = ("ft²", "ft") if imperial else ("m²", "m")
     with open(path, "w", newline="", encoding="utf-8-sig") as file:
         w = csv.writer(file, delimiter=";")
-        w.writerow(["Peça / localização", "Quantidade",
-                    "Comprimento (mm)", "Largura (mm)", "Espessura (mm)",
-                    "Fita borda: lados longos (0-2)",
-                    "Fita borda: lados curtos (0-2)",
-                    "Área total (m²)", "Fita total (m)", "Observações"])
+        w.writerow(["Piece / location", "Quantity",
+                    f"Length ({unit})", f"Width ({unit})", f"Thickness ({unit})",
+                    "Edge banding: long sides (0-2)",
+                    "Edge banding: short sides (0-2)",
+                    f"Total area ({area_unit})",
+                    f"Total edge banding ({tape_unit})", "Notes"])
         for name, qty, length, width, thickness, edge_a, edge_b, issue in rows:
-            area = qty*length*width/1e6
-            tape = qty*(edge_a*length+edge_b*width)/1000
+            if imperial:
+                # mm² -> ft² (1 ft = 304.8 mm); mm -> ft
+                area = qty*length*width/(304.8*304.8)
+                tape = qty*(edge_a*length+edge_b*width)/304.8
+            else:
+                area = qty*length*width/1e6
+                tape = qty*(edge_a*length+edge_b*width)/1000
             w.writerow([_safe_csv(name), qty,
-                        _number(length), _number(width), _number(thickness),
+                        _dim(length), _dim(width), _dim(thickness),
                         edge_a, edge_b, _number(area, 3), _number(tape, 3),
                         _safe_csv(issue)])
 
@@ -256,19 +284,19 @@ def _show_dialog(viewport):
     )
 
     dialog = QDialog(viewport.window())
-    dialog.setWindowTitle("Lista de corte — Marcenaria | IngeTrazo")
+    dialog.setWindowTitle("Cut list — Woodworking | IngeTrazo")
     dialog.resize(1100, 620)
     layout = QVBoxLayout(dialog)
     layout.addWidget(QLabel(
-        "Cada grupo/componente com geometria representa uma peça. "
-        "Medidas reais em mm; dimensões C × L × E, da maior para a menor."))
+        "Each group/component with geometry represents one piece. "
+        "Real measurements in mm; dimensions L × W × T, from largest to smallest."))
     status = QLabel("")
     status.setWordWrap(True)
     layout.addWidget(status)
     table = QTableWidget()
-    headers = ["Peça / localização", "Qtde", "Comp. (mm)",
-               "Larg. (mm)", "Esp. (mm)", "Fita C", "Fita L",
-               "Área (m²)", "Observações"]
+    headers = ["Piece / location", "Qty", "Length (mm)",
+               "Width (mm)", "Thick. (mm)", "Edge L", "Edge W",
+               "Area (m²)", "Notes"]
     table.setColumnCount(len(headers))
     table.setHorizontalHeaderLabels(headers)
     table.setAlternatingRowColors(True)
@@ -281,18 +309,27 @@ def _show_dialog(viewport):
     table.setSortingEnabled(False)
     layout.addWidget(table, 1)
     layout.addWidget(QLabel(
-        "Fita C = quantidade de lados com fita paralelos ao comprimento (0–2). "
-        "Fita L = lados paralelos à largura (0–2). Você pode editar o nome das peças. "
-        "Essas alterações não são gravadas no modelo."))
+        "Edge L = number of banded sides parallel to the length (0–2). "
+        "Edge W = sides parallel to the width (0–2). You can edit piece names. "
+        "These changes are not saved to the model."))
     export_irregular = QCheckBox(
-        "Incluir também peças com AVISOS na exportação (exige conferência manual)")
+        "Also include pieces with WARNINGS in the export (requires manual checking)")
     export_irregular.setChecked(False)
     layout.addWidget(export_irregular)
+    imperial_box = QCheckBox("Export dimensions in inches (in) and feet (ft) instead of millimetres (mm)")
+    imperial_box.setChecked(imperial)
+
+    def set_imperial(checked):
+        global imperial
+        imperial = bool(checked)
+
+    imperial_box.toggled.connect(set_imperial)
+    layout.addWidget(imperial_box)
     buttons = QHBoxLayout()
-    refresh_btn = QPushButton("Atualizar do modelo")
-    export_btn = QPushButton("Exportar CSV…")
-    copy_btn = QPushButton("Copiar tabela")
-    close_btn = QPushButton("Fechar")
+    refresh_btn = QPushButton("Refresh from model")
+    export_btn = QPushButton("Export CSV…")
+    copy_btn = QPushButton("Copy table")
+    close_btn = QPushButton("Close")
     for btn in (refresh_btn, copy_btn, export_btn, close_btn):
         buttons.addWidget(btn)
     layout.addLayout(buttons)
@@ -319,12 +356,12 @@ def _show_dialog(viewport):
                 table.setItem(i, j, item)
         bad = sum(1 for p in groups if p.issue)
         status.setText(
-            f"{len(pieces)} peças encontradas, {len(groups)} linhas agrupadas; "
-            f"área total { _number(sum(p.area for p in pieces), 3) } m². "
-            f"{bad} linha(s) com avisos. "
-            f"Geometria solta ignorada: {skipped['loose']} face(s); "
-            f"ocultos ignorados: {skipped['hidden']}; "
-            f"objetos sem sólido: {skipped['empty']}.")
+            f"{len(pieces)} pieces found, {len(groups)} grouped rows; "
+            f"total area { _number(sum(p.area for p in pieces), 3) } m². "
+            f"{bad} row(s) with warnings. "
+            f"Loose geometry ignored: {skipped['loose']} face(s); "
+            f"hidden ignored: {skipped['hidden']}; "
+            f"objects without a solid: {skipped['empty']}.")
         export_btn.setEnabled(bool(groups))
         copy_btn.setEnabled(bool(groups))
 
@@ -341,11 +378,11 @@ def _show_dialog(viewport):
                 dims = [float(vals[j].replace(",", ".")) for j in (2, 3, 4)]
                 edges = [int(vals[j]) for j in (5, 6)]
             except ValueError as exc:
-                raise ValueError(f"Linha {i+1}: número inválido") from exc
+                raise ValueError(f"Row {i+1}: invalid number") from exc
             if qty < 1 or any(d <= 0 for d in dims):
-                raise ValueError(f"Linha {i+1}: dimensões e quantidade devem ser positivas")
+                raise ValueError(f"Row {i+1}: dimensions and quantity must be positive")
             if any(v not in (0, 1, 2) for v in edges):
-                raise ValueError(f"Linha {i+1}: Fita C e Fita L devem ser 0, 1 ou 2")
+                raise ValueError(f"Row {i+1}: Edge L and Edge W must be 0, 1 or 2")
             rows.append((vals[0], qty, *dims, *edges, vals[8]))
         return rows, omitted
 
@@ -353,38 +390,43 @@ def _show_dialog(viewport):
         try:
             rows, omitted = extract_rows()
             if not rows:
-                QMessageBox.warning(dialog, "Lista de corte", "Nenhuma peça válida para exportar.")
+                QMessageBox.warning(dialog, "Cut list", "No valid pieces to export.")
                 return
             path, _ = QFileDialog.getSaveFileName(
-                dialog, "Salvar lista de corte", "lista_de_corte.csv", "CSV (*.csv)")
+                dialog, "Save cut list", "cut_list.csv", "CSV (*.csv)")
             if not path:
                 return
             if not path.lower().endswith(".csv"):
                 path += ".csv"
             make_csv(path, rows)
             QMessageBox.information(
-                dialog, "Lista de corte",
-                f"Lista exportada para:\n{path}\n\n"
-                f"{len(rows)} linhas exportadas; {omitted} com avisos não exportadas.\n"
-                "Revise medidas e acabamento antes de cortar.")
+                dialog, "Cut list",
+                f"List exported to:\n{path}\n\n"
+                f"{len(rows)} rows exported; {omitted} rows with warnings not exported.\n"
+                "Check measurements and finishing before cutting.")
         except (ValueError, OSError) as exc:
-            QMessageBox.critical(dialog, "Erro na exportação", str(exc))
+            QMessageBox.critical(dialog, "Export error", str(exc))
 
     def copy():
         try:
             rows, omitted = extract_rows()
             if not rows:
-                QMessageBox.warning(dialog, "Lista de corte", "Não há linhas válidas para copiar.")
+                QMessageBox.warning(dialog, "Cut list", "There are no valid rows to copy.")
                 return
-            header = ["Peça", "Qtde", "Comprimento (mm)",
-                      "Largura (mm)", "Espessura (mm)", "Fita C", "Fita L", "Observações"]
+            unit = _unit()
+            header = ["Piece", "Qty", f"Length ({unit})",
+                      f"Width ({unit})", f"Thickness ({unit})", "Edge L", "Edge W", "Notes"]
             lines = ["\t".join(header)]
-            for r in rows:
-                lines.append("\t".join(_safe_csv(str(v)) for v in r))
+            for name, qty, length, width, thickness, edge_a, edge_b, issue in rows:
+                if imperial:
+                    length, width, thickness = (
+                        round(v / MM_PER_INCH, 3) for v in (length, width, thickness))
+                lines.append("\t".join(_safe_csv(str(v)) for v in (
+                    name, qty, length, width, thickness, edge_a, edge_b, issue)))
             QApplication.clipboard().setText("\n".join(lines))
-            status.setText(status.text() + f" | Copiado: {len(rows)} linhas, {omitted} omitidas.")
+            status.setText(status.text() + f" | Copied: {len(rows)} rows, {omitted} omitted.")
         except ValueError as exc:
-            QMessageBox.warning(dialog, "Lista de corte", str(exc))
+            QMessageBox.warning(dialog, "Cut list", str(exc))
 
     refresh_btn.clicked.connect(fill)
     export_btn.clicked.connect(export)
@@ -394,10 +436,10 @@ def _show_dialog(viewport):
     dialog.exec()
 
 
-class ListaCorteMarcenaria(Tool):
-    name = "Lista de corte — Marcenaria"
+class CutListWoodworking(Tool):
+    name = "Cut list — Woodworking"
     shortcut = None
-    description = "Agrupa peças de madeira e exporta lista de corte CSV em mm."
+    description = "Groups wooden pieces and exports a cut list CSV in mm."
     uses_snap = False
 
     def on_activate(self, viewport):
